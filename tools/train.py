@@ -137,6 +137,18 @@ def main():
             )
             last_epoch = start_epoch + 1
 
+    if hasattr(cfg.MODEL, 'BACKBONE_IMAGE'):
+        if hasattr(cfg.MODEL.BACKBONE_IMAGE, 'PRETRAINED_CKPT'):
+            loc_type = torch.device('cpu') if dist else None
+            filename = cfg.MODEL.BACKBONE_IMAGE.PRETRAINED_CKPT
+            checkpoint = torch.load(filename, map_location=loc_type)
+            renamed_pretrained_state = {name.replace('backbone_image.', ''): param \
+                                            for name, param in checkpoint['model_state'].items() \
+                                                if 'backbone_image' in name}
+            model.backbone_image.load_state_dict(renamed_pretrained_state)
+            logger.info('==> Loading the pretrained parameters of BACKBONE_IMAGE from checkpoint %s to %s' % \
+                        (filename, 'CPU' if dist else 'GPU'))
+
     model.train()  # before wrap to DistributedDataParallel to support fixed some parameters
     if dist_train:
         model = nn.parallel.DistributedDataParallel(model, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()])

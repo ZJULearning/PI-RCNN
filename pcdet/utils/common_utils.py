@@ -31,7 +31,7 @@ def drop_info_with_name(info, name):
     return ret_info
 
 
-def rotate_points_along_z(points, angle):
+def rotate_points_along_z(points, angle, return_rot_matrix=False):
     """
     Args:
         points: (B, N, 3 + C)
@@ -53,7 +53,11 @@ def rotate_points_along_z(points, angle):
     ), dim=1).view(-1, 3, 3).float()
     points_rot = torch.matmul(points[:, :, 0:3], rot_matrix)
     points_rot = torch.cat((points_rot, points[:, :, 3:]), dim=-1)
-    return points_rot.numpy() if is_numpy else points_rot
+    if return_rot_matrix:
+        assert rot_matrix.numpy().shape[0] == 1
+        return points_rot.numpy() if is_numpy else points_rot, rot_matrix.numpy()[0]
+    else:
+        return points_rot.numpy() if is_numpy else points_rot
 
 
 def mask_points_by_range(points, limit_range):

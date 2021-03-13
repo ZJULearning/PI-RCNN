@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 from ...ops.iou3d_nms import iou3d_nms_utils
-from .. import backbones_2d, backbones_3d, dense_heads, roi_heads
+from .. import backbones_2d, backbones_3d, dense_heads, roi_heads, fuse_module
 from ..backbones_2d import map_to_bev
 from ..backbones_3d import pfe, vfe
 from ..model_utils import model_nms_utils
@@ -16,12 +16,12 @@ class Detector3DTemplate(nn.Module):
         self.model_cfg = model_cfg
         self.num_class = num_class
         self.dataset = dataset
-        self.class_names = dataset.class_names
+        self.class_names = getattr(dataset, 'class_names', None)
         self.register_buffer('global_step', torch.LongTensor(1).zero_())
 
         self.module_topology = [
-            'vfe', 'backbone_3d', 'map_to_bev_module', 'pfe',
-            'backbone_2d', 'dense_head',  'point_head', 'roi_head'
+            'backbone_image', 'vfe', 'backbone_3d', 'map_to_bev_module', 'pfe',
+            'backbone_2d', 'dense_head', 'point_head', 'fuse_module', 'roi_head',
         ]
 
     @property
@@ -34,11 +34,13 @@ class Detector3DTemplate(nn.Module):
     def build_networks(self):
         model_info_dict = {
             'module_list': [],
-            'num_rawpoint_features': self.dataset.point_feature_encoder.num_point_features,
-            'num_point_features': self.dataset.point_feature_encoder.num_point_features,
-            'grid_size': self.dataset.grid_size,
-            'point_cloud_range': self.dataset.point_cloud_range,
-            'voxel_size': self.dataset.voxel_size
+            'num_rawpoint_features': self.dataset.point_feature_encoder.num_point_features \
+                if hasattr(self.dataset, 'point_feature_encoder') else None,
+            'num_point_features': self.dataset.point_feature_encoder.num_point_features\
+                if hasattr(self.dataset, 'point_feature_encoder') else None,
+            'grid_size': getattr(self.dataset, 'grid_size', None),
+            'point_cloud_range': getattr(self.dataset, 'point_cloud_range', None),
+            'voxel_size': getattr(self.dataset, 'voxel_size', None),
         }
         for module_name in self.module_topology:
             module, model_info_dict = getattr(self, 'build_%s' % module_name)(
@@ -46,6 +48,20 @@ class Detector3DTemplate(nn.Module):
             )
             self.add_module(module_name, module)
         return model_info_dict['module_list']
+
+    def build_backbone_image(self, model_info_dict):
+        if self.model_cfg.get('BACKBONE_IMAGE', None) is None:
+            return None, model_info_dict
+
+        if not self.model_cfg.BACKBONE_IMAGE.ENABLED:
+            return None, model_info_dict
+
+        backbones_image_module = backbones_2d.__all__[self.model_cfg.BACKBONE_IMAGE.NAME](
+            model_cfg=self.model_cfg.BACKBONE_IMAGE,
+        )
+        model_info_dict['num_image_features'] = backbones_image_module.get_output_feature_dim()
+        model_info_dict['module_list'].append(backbones_image_module)
+        return backbones_image_module, model_info_dict
 
     def build_vfe(self, model_info_dict):
         if self.model_cfg.get('VFE', None) is None:
@@ -130,6 +146,17 @@ class Detector3DTemplate(nn.Module):
         )
         model_info_dict['module_list'].append(dense_head_module)
         return dense_head_module, model_info_dict
+
+    def build_fuse_module(self, model_info_dict):
+        if self.model_cfg.get('FUSE_MODULE', None) is None:
+            return None, model_info_dict
+
+        _fuse_module = fuse_module.__all__[self.model_cfg.FUSE_MODULE.NAME](
+            model_cfg=self.model_cfg.FUSE_MODULE,
+        )
+        model_info_dict['module_list'].append(_fuse_module)
+        model_info_dict['num_point_features'] = _fuse_module.output_features
+        return _fuse_module, model_info_dict
 
     def build_point_head(self, model_info_dict):
         if self.model_cfg.get('POINT_HEAD', None) is None:

@@ -15,6 +15,12 @@ INFO_PATH: {
 
 FOV_POINTS_ONLY: True
 
+IGNORE_EXISTED_INFO_FILE: True
+
+GT_DATABASE:
+    TAG: 'with_seg_mc'
+    WITH_SEG: True
+    SEG_FEATURES_DIR: './output/kitti_models/pi_rcnn_seg_pretrain_mc/default/eval/epoch_200/trainval/default/final_result/data'
 
 DATA_AUGMENTOR:
     DISABLE_AUG_LIST: ['placeholder']

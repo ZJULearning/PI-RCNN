@@ -1,7 +1,9 @@
 import copy
 import pickle
 
+import os
 import numpy as np
+import cv2
 from skimage import io
 
 from ...ops.roiaware_pool3d import roiaware_pool3d_utils
@@ -30,6 +32,8 @@ class KittiDataset(DatasetTemplate):
 
         self.kitti_infos = []
         self.include_kitti_data(self.mode)
+
+        self.return_image = getattr(self.dataset_cfg, 'RETURN_IMAGE', False)
 
     def include_kitti_data(self, mode):
         if self.logger is not None:
@@ -63,6 +67,11 @@ class KittiDataset(DatasetTemplate):
         lidar_file = self.root_split_path / 'velodyne' / ('%s.bin' % idx)
         assert lidar_file.exists()
         return np.fromfile(str(lidar_file), dtype=np.float32).reshape(-1, 4)
+
+    def get_image(self, idx):
+        img_file = self.root_split_path / 'image_2' / ('%s.png' % idx)
+        assert img_file.exists()
+        return np.array(io.imread(img_file))
 
     def get_image_shape(self, idx):
         img_file = self.root_split_path / 'image_2' / ('%s.png' % idx)
@@ -190,11 +199,22 @@ class KittiDataset(DatasetTemplate):
             infos = executor.map(process_single_scene, sample_id_list)
         return list(infos)
 
-    def create_groundtruth_database(self, info_path=None, used_classes=None, split='train'):
+    def create_groundtruth_database(self, info_path=None, used_classes=None, split='train', cfg=None):
         import torch
 
-        database_save_path = Path(self.root_path) / ('gt_database' if split == 'train' else ('gt_database_%s' % split))
-        db_info_save_path = Path(self.root_path) / ('kitti_dbinfos_%s.pkl' % split)
+        with_seg = False
+        tag = seg_features_dir = None
+        if hasattr(cfg, 'GT_DATABASE'):
+            if cfg.GT_DATABASE.WITH_SEG:
+                seg_features_dir = cfg.GT_DATABASE.SEG_FEATURES_DIR
+                tag = cfg.GT_DATABASE.TAG
+                with_seg = True
+        if tag is not None:
+            database_save_path = Path(self.root_path) / (('gt_database_%s' % tag) if split == 'train' else ('gt_database_%s_%s' % (tag, split)))
+        else:
+            database_save_path = Path(self.root_path) / ('gt_database' if split == 'train' else ('gt_database_%s' % split))
+
+        db_info_save_path = Path(self.root_path) / ('kitti_dbinfos_%s_%s.pkl' % (split, tag))
 
         database_save_path.mkdir(parents=True, exist_ok=True)
         all_db_infos = {}
@@ -213,6 +233,30 @@ class KittiDataset(DatasetTemplate):
             bbox = annos['bbox']
             gt_boxes = annos['gt_boxes_lidar']
 
+            pts_seg_features = None
+            if with_seg:
+                seg_features = np.load(os.path.join(seg_features_dir, f'{sample_idx}.npy'))
+                calib_info = info['calib']
+                P2 = calib_info['P2']
+                R0_4x4 = calib_info['R0_rect']
+                V2C_4x4 = calib_info['Tr_velo_to_cam']
+
+                points_dom = np.concatenate((points[:, 0:3], np.ones((points.shape[0], 1), dtype=points.dtype)), axis=1)
+                pts_rect_hom_T = np.dot(R0_4x4, np.dot(V2C_4x4, points_dom.T))
+                pts_2d_hom = np.dot(P2, pts_rect_hom_T).T
+                pts_img = (pts_2d_hom[:, 0:2].T / pts_rect_hom_T[2, :]).T
+                pts_rect_depth = pts_2d_hom[:, 2] - P2.T[3, 2]
+
+                # img_shape = info['image']['image_shape']
+                img_shape = seg_features.shape[1:]
+                val_flag_1 = np.logical_and(pts_img[:, 0] >= 0, pts_img[:, 0] < img_shape[1])
+                val_flag_2 = np.logical_and(pts_img[:, 1] >= 0, pts_img[:, 1] < img_shape[0])
+                val_flag_merge = np.logical_and(val_flag_1, val_flag_2)
+                pts_valid_flag = np.logical_and(val_flag_merge, pts_rect_depth >= 0)
+                pts_seg_features = np.zeros((points.shape[0], seg_features.shape[0]), dtype=seg_features.dtype)
+                pts_img = pts_img.astype(np.int32)
+                pts_seg_features[pts_valid_flag, :] = seg_features[:, pts_img[pts_valid_flag, 1], pts_img[pts_valid_flag, 0]].T
+
             num_obj = gt_boxes.shape[0]
             point_indices = roiaware_pool3d_utils.points_in_boxes_cpu(
                 torch.from_numpy(points[:, 0:3]), torch.from_numpy(gt_boxes)
@@ -222,6 +266,9 @@ class KittiDataset(DatasetTemplate):
                 filename = '%s_%s_%d.bin' % (sample_idx, names[i], i)
                 filepath = database_save_path / filename
                 gt_points = points[point_indices[i] > 0]
+                if pts_seg_features is not None:
+                    gt_seg_features = pts_seg_features[point_indices[i] > 0]
+                    gt_points = np.concatenate((gt_points, gt_seg_features), axis=1)
 
                 gt_points[:, :3] -= gt_boxes[i, :3]
                 with open(filepath, 'w') as f:
@@ -361,6 +408,12 @@ class KittiDataset(DatasetTemplate):
             'calib': calib,
         }
 
+        if self.return_image:
+            image = self.get_image(sample_idx)
+            input_dict['image'] = image
+            input_dict['P2'] = input_dict['calib'].P2
+            input_dict['lidar_to_rect'] = input_dict['calib'].lidar_to_rect_matrix
+
         if 'annos' in info:
             annos = info['annos']
             annos = common_utils.drop_info_with_name(annos, name='DontCare')
@@ -380,6 +433,12 @@ class KittiDataset(DatasetTemplate):
         data_dict = self.prepare_data(data_dict=input_dict)
 
         data_dict['image_shape'] = img_shape
+
+        if getattr(self.dataset_cfg, 'USE_PRE_SAVED_SEG_FEATURES', False):
+            dirname = self.dataset_cfg.SEG_FEATURES_DIR
+            seg_features = np.load(os.path.join(dirname, f'{sample_idx}.npy'))
+            data_dict['presaved_seg_features'] = seg_features
+
         return data_dict
 
 
@@ -394,31 +453,35 @@ def create_kitti_infos(dataset_cfg, class_names, data_path, save_path, workers=4
 
     print('---------------Start to generate data infos---------------')
 
-    dataset.set_split(train_split)
-    kitti_infos_train = dataset.get_infos(num_workers=workers, has_label=True, count_inside_pts=True)
-    with open(train_filename, 'wb') as f:
-        pickle.dump(kitti_infos_train, f)
-    print('Kitti info train file is saved to %s' % train_filename)
+    if not (getattr(dataset_cfg, 'IGNORE_EXISTED_INFO_FILE', False) and os.path.exists(train_filename)):
+        dataset.set_split(train_split)
+        kitti_infos_train = dataset.get_infos(num_workers=workers, has_label=True, count_inside_pts=True)
+        with open(train_filename, 'wb') as f:
+            pickle.dump(kitti_infos_train, f)
+        print('Kitti info train file is saved to %s' % train_filename)
 
-    dataset.set_split(val_split)
-    kitti_infos_val = dataset.get_infos(num_workers=workers, has_label=True, count_inside_pts=True)
-    with open(val_filename, 'wb') as f:
-        pickle.dump(kitti_infos_val, f)
-    print('Kitti info val file is saved to %s' % val_filename)
+    if not (getattr(dataset_cfg, 'IGNORE_EXISTED_INFO_FILE', False) and os.path.exists(val_filename)):
+        dataset.set_split(val_split)
+        kitti_infos_val = dataset.get_infos(num_workers=workers, has_label=True, count_inside_pts=True)
+        with open(val_filename, 'wb') as f:
+            pickle.dump(kitti_infos_val, f)
+        print('Kitti info val file is saved to %s' % val_filename)
 
-    with open(trainval_filename, 'wb') as f:
-        pickle.dump(kitti_infos_train + kitti_infos_val, f)
-    print('Kitti info trainval file is saved to %s' % trainval_filename)
+    if not (getattr(dataset_cfg, 'IGNORE_EXISTED_INFO_FILE', False) and os.path.exists(trainval_filename)):
+        with open(trainval_filename, 'wb') as f:
+            pickle.dump(kitti_infos_train + kitti_infos_val, f)
+        print('Kitti info trainval file is saved to %s' % trainval_filename)
 
-    dataset.set_split('test')
-    kitti_infos_test = dataset.get_infos(num_workers=workers, has_label=False, count_inside_pts=False)
-    with open(test_filename, 'wb') as f:
-        pickle.dump(kitti_infos_test, f)
-    print('Kitti info test file is saved to %s' % test_filename)
+    if not (getattr(dataset_cfg, 'IGNORE_EXISTED_INFO_FILE', False) and os.path.exists(test_filename)):
+        dataset.set_split('test')
+        kitti_infos_test = dataset.get_infos(num_workers=workers, has_label=False, count_inside_pts=False)
+        with open(test_filename, 'wb') as f:
+            pickle.dump(kitti_infos_test, f)
+        print('Kitti info test file is saved to %s' % test_filename)
 
     print('---------------Start create groundtruth database for data augmentation---------------')
     dataset.set_split(train_split)
-    dataset.create_groundtruth_database(train_filename, split=train_split)
+    dataset.create_groundtruth_database(train_filename, split=train_split, cfg=dataset_cfg)
 
     print('---------------Data preparation Done---------------')
 

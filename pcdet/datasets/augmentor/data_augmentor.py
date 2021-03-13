@@ -40,18 +40,21 @@ class DataAugmentor(object):
     def __setstate__(self, d):
         self.__dict__.update(d)
    
-    def random_world_flip(self, data_dict=None, config=None):
+    def random_world_flip(self, data_dict=None, config=None, lidar_to_rect=None):
         if data_dict is None:
             return partial(self.random_world_flip, config=config)
         gt_boxes, points = data_dict['gt_boxes'], data_dict['points']
+        lidar_to_rect = data_dict['lidar_to_rect'] if 'lidar_to_rect' in data_dict else None
         for cur_axis in config['ALONG_AXIS_LIST']:
             assert cur_axis in ['x', 'y']
-            gt_boxes, points = getattr(augmentor_utils, 'random_flip_along_%s' % cur_axis)(
-                gt_boxes, points,
+            gt_boxes, points, lidar_to_rect = getattr(augmentor_utils, 'random_flip_along_%s' % cur_axis)(
+                gt_boxes, points, lidar_to_rect=lidar_to_rect
             )
 
         data_dict['gt_boxes'] = gt_boxes
         data_dict['points'] = points
+        if lidar_to_rect is not None:
+            data_dict['lidar_to_rect'] = lidar_to_rect
         return data_dict
 
     def random_world_rotation(self, data_dict=None, config=None):
@@ -60,22 +63,27 @@ class DataAugmentor(object):
         rot_range = config['WORLD_ROT_ANGLE']
         if not isinstance(rot_range, list):
             rot_range = [-rot_range, rot_range]
-        gt_boxes, points = augmentor_utils.global_rotation(
-            data_dict['gt_boxes'], data_dict['points'], rot_range=rot_range
+        lidar_to_rect = data_dict['lidar_to_rect'] if 'lidar_to_rect' in data_dict else None
+        gt_boxes, points, lidar_to_rect = augmentor_utils.global_rotation(
+            data_dict['gt_boxes'], data_dict['points'], rot_range=rot_range, lidar_to_rect=lidar_to_rect
         )
-
         data_dict['gt_boxes'] = gt_boxes
         data_dict['points'] = points
+        if lidar_to_rect is not None:
+            data_dict['lidar_to_rect'] = lidar_to_rect
         return data_dict
 
     def random_world_scaling(self, data_dict=None, config=None):
         if data_dict is None:
             return partial(self.random_world_scaling, config=config)
-        gt_boxes, points = augmentor_utils.global_scaling(
-            data_dict['gt_boxes'], data_dict['points'], config['WORLD_SCALE_RANGE']
+        lidar_to_rect = data_dict['lidar_to_rect'] if 'lidar_to_rect' in data_dict else None
+        gt_boxes, points, lidar_to_rect = augmentor_utils.global_scaling(
+            data_dict['gt_boxes'], data_dict['points'], config['WORLD_SCALE_RANGE'], lidar_to_rect=lidar_to_rect
         )
         data_dict['gt_boxes'] = gt_boxes
         data_dict['points'] = points
+        if lidar_to_rect is not None:
+            data_dict['lidar_to_rect'] = lidar_to_rect
         return data_dict
 
     def forward(self, data_dict):

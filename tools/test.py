@@ -58,10 +58,16 @@ def eval_single_ckpt(model, test_loader, args, eval_output_dir, logger, epoch_id
     model.cuda()
 
     # start evaluation
-    eval_utils.eval_one_epoch(
-        cfg, model, test_loader, epoch_id, logger, dist_test=dist_test,
-        result_dir=eval_output_dir, save_to_file=args.save_to_file
-    )
+    if cfg.DATA_CONFIG.IMAGE_SEG_TASK:
+        eval_utils.eval_one_epoch_for_semantic(
+            cfg, model, test_loader, epoch_id, logger, dist_test=dist_test,
+            result_dir=eval_output_dir, save_to_file=args.save_to_file
+        )
+    else:
+        eval_utils.eval_one_epoch(
+            cfg, model, test_loader, epoch_id, logger, dist_test=dist_test,
+            result_dir=eval_output_dir, save_to_file=args.save_to_file
+        )
 
 
 def get_no_evaluated_ckpt(ckpt_dir, ckpt_record_file, args):
@@ -116,10 +122,16 @@ def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir
 
         # start evaluation
         cur_result_dir = eval_output_dir / ('epoch_%s' % cur_epoch_id) / cfg.DATA_CONFIG.DATA_SPLIT['test']
-        tb_dict = eval_utils.eval_one_epoch(
-            cfg, model, test_loader, cur_epoch_id, logger, dist_test=dist_test,
-            result_dir=cur_result_dir, save_to_file=args.save_to_file
-        )
+        if getattr(cfg.DATA_CONFIG, 'IMAGE_SEG_TASK', False):
+            tb_dict = eval_utils.eval_one_epoch_for_semantic(
+                cfg, model, test_loader, cur_epoch_id, logger, dist_test=dist_test,
+                result_dir=cur_result_dir, save_to_file=args.save_to_file
+            )
+        else:
+            tb_dict = eval_utils.eval_one_epoch(
+                cfg, model, test_loader, cur_epoch_id, logger, dist_test=dist_test,
+                result_dir=cur_result_dir, save_to_file=args.save_to_file
+            )
 
         if cfg.LOCAL_RANK == 0:
             for key, val in tb_dict.items():

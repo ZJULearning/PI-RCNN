@@ -121,5 +121,98 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     return ret_dict
 
 
+def eval_one_epoch_for_semantic(cfg, model, dataloader, epoch_id, logger, dist_test=False, save_to_file=False, result_dir=None):
+    result_dir.mkdir(parents=True, exist_ok=True)
+
+    final_output_dir = result_dir / 'final_result' / 'data'
+    if save_to_file:
+        final_output_dir.mkdir(parents=True, exist_ok=True)
+
+    dataset = dataloader.dataset
+    class_names = dataset.class_names
+    det_annos = []
+
+    logger.info('*************** EPOCH %s EVALUATION *****************' % epoch_id)
+    if dist_test:
+        num_gpus = torch.cuda.device_count()
+        local_rank = cfg.LOCAL_RANK % num_gpus
+        model = torch.nn.parallel.DistributedDataParallel(
+                model,
+                device_ids=[local_rank],
+                broadcast_buffers=False
+        )
+    model.eval()
+
+    if cfg.LOCAL_RANK == 0:
+        progress_bar = tqdm.tqdm(total=len(dataloader), leave=True, desc='eval', dynamic_ncols=True)
+    start_time = time.time()
+    preds = []
+    targets = []
+    for i, batch_dict in enumerate(dataloader):
+        load_data_to_gpu(batch_dict)
+        with torch.no_grad():
+            batch_dict = model(batch_dict)
+
+        if 'image_seg_label' in batch_dict:
+            target = batch_dict['image_seg_label'].cpu().numpy().astype(np.int32)
+        else:
+            target = [None] * batch_dict['batch_size']
+        pred = batch_dict['pred_image_seg'].cpu().numpy()
+        pred_copy = pred.copy()
+        pred = np.argmax(pred, axis=1).astype(np.int32)
+        preds.extend([pred[b] for b in range(batch_dict['batch_size'])])
+        targets.extend([target[b] for b in range(batch_dict['batch_size'])])
+
+        if save_to_file:
+            for b in range(batch_dict['batch_size']):
+                filename = final_output_dir / f'{batch_dict["sample_id"][b]}.npy'
+                np.save(filename, pred_copy[b].astype(np.float32))
+
+        disp_dict = {}
+
+        if cfg.LOCAL_RANK == 0:
+            progress_bar.set_postfix(disp_dict)
+            progress_bar.update()
+
+    if cfg.LOCAL_RANK == 0:
+        progress_bar.close()
+
+    # if dist_test:
+        # rank, world_size = common_utils.get_dist_info()
+        # det_annos = common_utils.merge_results_dist(det_annos, len(dataset), tmpdir=result_dir / 'tmpdir')
+        # metric = common_utils.merge_results_dist([metric], world_size, tmpdir=result_dir / 'tmpdir')
+
+    logger.info('*************** Performance of EPOCH %s *****************' % epoch_id)
+    sec_per_example = (time.time() - start_time) / len(dataloader.dataset)
+    logger.info('Generate label finished(sec_per_example: %.4f second).' % sec_per_example)
+
+    if cfg.LOCAL_RANK != 0:
+        return {}
+
+    ret_dict = {}
+    # if dist_test:
+    #     for key, val in metric[0].items():
+    #         for k in range(1, world_size):
+    #             metric[0][key] += metric[k][key]
+    #     metric = metric[0]
+
+    # gt_num_cnt = metric['gt_num']
+
+    with open(result_dir / 'result.pkl', 'wb') as f:
+        pickle.dump(det_annos, f)
+
+    result_str, result_dict = dataset.evaluation(
+        preds, targets,
+    )
+
+    logger.info(result_str)
+    ret_dict.update(result_dict)
+
+    logger.info('Result is save to %s' % result_dir)
+    logger.info('****************Evaluation done.*****************')
+    return ret_dict
+
+
+
 if __name__ == '__main__':
     pass

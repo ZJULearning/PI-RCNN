@@ -2,6 +2,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+import cv2
 import torch.utils.data as torch_data
 
 from ..utils import common_utils
@@ -156,6 +157,46 @@ class DatasetTemplate(torch_data.Dataset):
         batch_size = len(batch_list)
         ret = {}
 
+        if 'image' in data_dict.keys():
+            cnt_map = {}
+            for img in data_dict['image']:
+                h, w = img.shape[0:2]
+                if f'{h}x{w}' in cnt_map:
+                    cnt_map[f'{h}x{w}'] += 1
+                else:
+                    cnt_map[f'{h}x{w}'] = 1
+
+            shapes = list(cnt_map.keys())
+            argmax = shapes[0]
+            for i in range(1, len(shapes)):
+                if cnt_map[shapes[i]] > cnt_map[argmax]:
+                    argmax = shapes[i]
+            h, w = [int(x) for x in argmax.split('x')]
+
+            for key in ['image', 'image_seg_label']:
+                if key not in data_dict: continue
+                interpolation = cv2.INTER_LINEAR if key == 'image' else cv2.INTER_NEAREST
+                for k in range(batch_size):
+                    data_dict[key][k] = cv2.resize(data_dict[key][k].astype(np.uint8), (w, h), interpolation=interpolation)
+
+            for key in ['presaved_seg_features']:
+                if key not in data_dict: continue
+                for k in range(batch_size):
+                    _copy = data_dict[key][k]
+                    data_dict[key][k] = np.zeros((data_dict[key][k].shape[0], h, w))
+                    for i in range(data_dict[key][k].shape[0]):
+                        data_dict[key][k][i, :, :] = cv2.resize(_copy[i], (w, h),
+                                                   interpolation=cv2.INTER_NEAREST)
+
+            if 'P2' in data_dict:
+                for k in range(batch_size):
+                    _h, _w = data_dict['image_shape'][k]
+                    if _h != h or _w != w:
+                        resize_matrix = np.array([[w / _w,     0., 0.],
+                                                  [    0., h / _h, 0.],
+                                                  [    0.,     0., 1.]])
+                        data_dict['P2'][k] = np.dot(resize_matrix, data_dict['P2'][k])
+
         for key, val in data_dict.items():
             try:
                 if key in ['voxels', 'voxel_num_points']:
@@ -172,6 +213,8 @@ class DatasetTemplate(torch_data.Dataset):
                     for k in range(batch_size):
                         batch_gt_boxes3d[k, :val[k].__len__(), :] = val[k]
                     ret[key] = batch_gt_boxes3d
+                elif key in ['new_point_mask', 'original_seg_features']:
+                    ret[key] = np.concatenate(val, axis=0)
                 else:
                     ret[key] = np.stack(val, axis=0)
             except:

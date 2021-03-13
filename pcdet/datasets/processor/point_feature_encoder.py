@@ -8,6 +8,7 @@ class PointFeatureEncoder(object):
         assert list(self.point_encoding_config.src_feature_list[0:3]) == ['x', 'y', 'z']
         self.used_feature_list = self.point_encoding_config.used_feature_list
         self.src_feature_list = self.point_encoding_config.src_feature_list
+        self.seg_feature_list = getattr(self.point_encoding_config, 'seg_feature_list', None)
         self.point_cloud_range = point_cloud_range
 
     @property
@@ -26,10 +27,12 @@ class PointFeatureEncoder(object):
                 use_lead_xyz: whether to use xyz as point-wise features
                 ...
         """
-        data_dict['points'], use_lead_xyz = getattr(self, self.point_encoding_config.encoding_type)(
+        data_dict['points'], use_lead_xyz, seg_features = getattr(self, self.point_encoding_config.encoding_type)(
             data_dict['points']
         )
         data_dict['use_lead_xyz'] = use_lead_xyz
+        if seg_features is not None:
+            data_dict['original_seg_features'] = seg_features
         return data_dict
 
     def absolute_coordinates_encoding(self, points=None):
@@ -44,4 +47,14 @@ class PointFeatureEncoder(object):
             idx = self.src_feature_list.index(x)
             point_feature_list.append(points[:, idx:idx+1])
         point_features = np.concatenate(point_feature_list, axis=1)
-        return point_features, True
+
+        if self.seg_feature_list is not None:
+            seg_feature_list = []
+            for x in self.seg_feature_list:
+                idx = self.src_feature_list.index(x)
+                seg_feature_list.append(points[:, idx:idx + 1])
+            seg_features = np.concatenate(seg_feature_list, axis=1)
+        else:
+            seg_features = None
+
+        return point_features, True, seg_features

@@ -148,12 +148,19 @@ class DataBaseSampler(object):
             sampled_gt_boxes[:, 0:7], extra_width=self.sampler_cfg.REMOVE_EXTRA_WIDTH
         )
         points = box_utils.remove_points_in_boxes3d(points, large_sampled_gt_boxes)
+        original_point_mask = np.zeros((points.shape[0],))
+        obj_points_mask = np.ones((obj_points.shape[0],))
+        if self.sampler_cfg.get('USE_SEG_FEATURES', False):
+            points = np.concatenate((points,
+                        np.zeros((points.shape[0], self.sampler_cfg.NUM_POINT_FEATURES - points.shape[1]), dtype=points.dtype)), axis=1)
         points = np.concatenate([obj_points, points], axis=0)
+        new_point_mask = np.concatenate([obj_points_mask, original_point_mask], axis=0)
         gt_names = np.concatenate([gt_names, sampled_gt_names], axis=0)
         gt_boxes = np.concatenate([gt_boxes, sampled_gt_boxes], axis=0)
         data_dict['gt_boxes'] = gt_boxes
         data_dict['gt_names'] = gt_names
         data_dict['points'] = points
+        data_dict['new_point_mask'] = new_point_mask
         return data_dict
 
     def __call__(self, data_dict):

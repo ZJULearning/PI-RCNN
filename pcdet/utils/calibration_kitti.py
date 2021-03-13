@@ -39,6 +39,10 @@ class Calibration(object):
         self.tx = self.P2[0, 3] / (-self.fu)
         self.ty = self.P2[1, 3] / (-self.fv)
 
+        # self.lidar_to_img_matrix = np.dot(self.P2,
+        #                                   np.concatenate((np.dot(self.R0, self.V2C), np.array([[0., 0., 0., 1.]])), axis=0))
+        self.lidar_to_rect_matrix = np.dot(self.R0, self.V2C)
+
     def cart_to_hom(self, pts):
         """
         :param pts: (N, 3 or 2)

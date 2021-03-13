@@ -21,6 +21,9 @@ class DataProcessor(object):
             return partial(self.mask_points_and_boxes_outside_range, config=config)
         mask = common_utils.mask_points_by_range(data_dict['points'], self.point_cloud_range)
         data_dict['points'] = data_dict['points'][mask]
+        for key in ['new_point_mask', 'original_seg_features']:
+            if key in data_dict:
+                data_dict[key] = data_dict[key][mask]
         if data_dict.get('gt_boxes', None) is not None and config.REMOVE_OUTSIDE_BOXES and self.training:
             mask = box_utils.mask_boxes_outside_range_numpy(
                 data_dict['gt_boxes'], self.point_cloud_range, min_num_corners=config.get('min_num_corners', 1)
@@ -37,6 +40,9 @@ class DataProcessor(object):
             shuffle_idx = np.random.permutation(points.shape[0])
             points = points[shuffle_idx]
             data_dict['points'] = points
+            for key in ['new_point_mask', 'original_seg_features']:
+                if key in data_dict:
+                    data_dict[key] = data_dict[key][shuffle_idx]
 
         return data_dict
 
@@ -88,6 +94,7 @@ class DataProcessor(object):
             pts_near_flag = pts_depth < 40.0
             far_idxs_choice = np.where(pts_near_flag == 0)[0]
             near_idxs = np.where(pts_near_flag == 1)[0]
+            near_idxs_choice = np.random.choice(near_idxs, num_points - len(far_idxs_choice), replace=False)
             choice = []
             if num_points > len(far_idxs_choice):
                 near_idxs_choice = np.random.choice(near_idxs, num_points - len(far_idxs_choice), replace=False)
@@ -104,6 +111,9 @@ class DataProcessor(object):
                 choice = np.concatenate((choice, extra_choice), axis=0)
             np.random.shuffle(choice)
         data_dict['points'] = points[choice]
+        for key in ['new_point_mask', 'original_seg_features']:
+            if key in data_dict:
+                data_dict[key] = data_dict[key][choice]
         return data_dict
 
     def forward(self, data_dict):

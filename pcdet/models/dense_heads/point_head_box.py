@@ -99,6 +99,7 @@ class PointHeadBox(PointHeadTemplate):
             targets_dict = self.assign_targets(batch_dict)
             ret_dict['point_cls_labels'] = targets_dict['point_cls_labels']
             ret_dict['point_box_labels'] = targets_dict['point_box_labels']
+            batch_dict['point_cls_labels'] = ret_dict['point_cls_labels']
 
         if not self.training or self.predict_boxes_when_training:
             point_cls_preds, point_box_preds = self.generate_predicted_boxes(
