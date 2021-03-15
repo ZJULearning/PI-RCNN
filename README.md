@@ -4,7 +4,19 @@ Code release for [PI-RCNN: An Efficient Multi-sensor 3D Object Detector with Poi
 
 ![PI-RCNN](./docs/PI-RCNN.png)
 
-To run this code, please first follow the original [README.md](./README.md) to install the environment and dependencies.
+To run this code, please first follow the original [README.md](./README.md) to install the environment and dependencies. And install the knn_cuda:
+
+```
+pip install --upgrade https://github.com/unlimblue/KNN_CUDA/releases/download/0.2/KNN_CUDA-0.2-py3-none-any.whl --user
+```
+
+knn_cuda needs the ninja to be installed. So if you encounter error of no ninja, please try to run the following code to install ninja:
+
+```
+wget https://github.com/ninja-build/ninja/releases/download/v1.8.2/ninja-linux.zip
+sudo unzip ninja-linux.zip -d /usr/local/bin/
+sudo update-alternatives --install /usr/bin/ninja ninja /usr/local/bin/ninja 1 --force
+```
 
 ### KITTI Dataset
 
