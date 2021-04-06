@@ -1,0 +1,39 @@
+DATASET: 'KittiSegDataset'
+DATA_PATH: '../data/kitti/semantic'
+
+IMAGE_SEG_TASK: True
+
+DATA_SPLIT: {
+    'train': train,
+    'test': val,
+#    'test': test,
+}
+
+CONVERT_LABEL: False
+
+NO_LABEL: False
+
+DATA_AUGMENTOR:
+    DISABLE_AUG_LIST: []
+
+    AUG_CONFIG_LIST:
+        - NAME: lrflip
+          APPLY_PROB: 0.5
+          KEYS: ['image', 'image_seg_label']
+
+        - NAME: crop
+          APPLY_PROB: 0.5
+          KEYS: ['image', 'image_seg_label']
+          ALONG_AXIS_LIST: ['x']
+          CENTER_CROP: False
+          KEEP_ORIGIN_SIZE: True
+          MULTI_SCALE_OF: 1
+          RATIO: 0.6
+
+        - NAME: jit_color
+          APPLY_PROB: 0.5
+          KEYS: ['image']
+          BRIGHTNESS: 0.1
+          CONTRAST: 0.1
+          SATURATION: 0.1
+          HUE: 0.1
